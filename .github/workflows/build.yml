@@ -1,0 +1,168 @@
+name: build
+
+on:
+  workflow_call:
+    inputs:
+      cache-path:
+        required: true
+        type: string
+
+permissions: {}
+
+env:
+  OWNER: ${{ github.repository_owner }}
+  HEAD_REPO_NAME: Dash-User-Contributions
+  # BASE_REPO: Kapeli/Dash-User-Contributions
+  BASE_REPO: ${{ github.repository_owner }}/Dash-User-Contributions
+  THIS_REPO_NAME: ${{ github.event.repository.name }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        persist-credentials: false
+    - uses: ruby/setup-ruby@0dafeac902942906541bc140009cdbf32665b601 # v1.315.0
+      with:
+        ruby-version: ruby
+        bundler-cache: true
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ inputs.cache-path }}
+        key: dump
+    - run: |
+        go install github.com/technosophos/dashing@172c69f1c58cf6efe5b1813fa06ce29a684b00e4
+        echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+    - run: bundle exec rake
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      with:
+        name: results
+        path: 'results/*'
+
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # if: github.ref == 'refs/heads/main'
+      with:
+        token: ${{ secrets.DASH_USER_CONTRIBUTIONS_PAT }}
+        repository: ${{ env.BASE_REPO }}
+        path: ${{ env.HEAD_REPO_NAME }}
+        persist-credentials: true
+    - name: create branch for PR if there are changes
+      id: build
+      # if: github.ref == 'refs/heads/main'
+      env:
+        RUN_ATTEMPT: ${{ github.run_attempt }}
+        RUN_NUMBER: ${{ github.run_number }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euxo pipefail
+
+        git -C "$HEAD_REPO_NAME" remote add rw "https://github.com/$OWNER/$HEAD_REPO_NAME"
+        git -C "$HEAD_REPO_NAME" fetch --depth=1 rw "+refs/heads/$THIS_REPO_NAME/*:refs/remotes/rw/$THIS_REPO_NAME/*" || true
+
+        previous_pr_info=$(
+          gh pr list --repo "$BASE_REPO" --author "$OWNER" --json number,headRefName |
+            jq --raw-output --arg prefix "$THIS_REPO_NAME/" '.[] | select(.headRefName | startswith($prefix)) | "\(.number) \(.headRefName)"' |
+            head -n1
+        )
+        previous_pr_number="${previous_pr_info%% *}"
+        previous_branch="${previous_pr_info##* }"
+
+        branch="$THIS_REPO_NAME/$RUN_NUMBER-$RUN_ATTEMPT"
+        git -C "$HEAD_REPO_NAME" branch "$branch"
+
+        changes=()
+        for src_json_path in results/*/docset.json; do
+          dst_rel_json_path="docsets/${src_json_path#*/}"
+          dst_json_path="$HEAD_REPO_NAME/$dst_rel_json_path"
+          if ! diff -u "$src_json_path" "$dst_json_path"; then
+            if [[ -z "$previous_branch" ]] || ! diff -u "$src_json_path" <(git -C "$HEAD_REPO_NAME" show "rw/$previous_branch:$dst_rel_json_path"); then
+              new_changes=1
+            fi
+            rsync --archive --delete "$(dirname "$src_json_path")/" "$(dirname "$dst_json_path")/"
+            git -C "$HEAD_REPO_NAME" add "$(dirname "$dst_rel_json_path")"
+            changes+=("$(jq --raw-output '.name + " " + .version' "$src_json_path")")
+          fi
+        done
+        if ! [[ -v new_changes ]]; then
+          echo "No new changes since $BASE_REPO#$previous_pr_number ($previous_branch)" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+        fi
+
+        message="$(ruby -e 'puts ARGV.join(", ")' -- "${changes[@]}")"
+
+        git -C "$HEAD_REPO_NAME" checkout -B "$branch"
+        git -C "$HEAD_REPO_NAME" \
+            -c user.name="$(git log -1 --format=%an)" \
+            -c user.email="$(git log -1 --format=%ae)" \
+            commit --message "$message"
+        git -C "$HEAD_REPO_NAME" push rw HEAD
+
+        printf '%s\n' "${changes[@]}" >> "$GITHUB_STEP_SUMMARY"
+        echo "branch=$branch" >> "$GITHUB_OUTPUT"
+    - name: commit changes to gh-pages
+      if: github.ref == 'refs/heads/main'
+      run: |
+        set -euxo pipefail
+
+        git config user.name "github-actions[bot]"
+        git config user.email "github-actions[bot]@users.noreply.github.com"
+
+        branch=gh-pages
+
+        if git fetch --depth=1 origin "$branch"; then
+          git branch "$branch" --track "origin/$branch"
+          git symbolic-ref HEAD "refs/heads/$branch"
+          git reset
+        else
+          git checkout --orphan "$branch"
+          git rm -rf .
+        fi
+
+        touch .nojekyll
+        bundle exec script/index > index.html
+
+        git add -f .nojekyll html index.html
+        if ! git diff --staged --quiet; then
+          git commit -m "$(date)"
+          git push origin "$branch"
+        fi
+    outputs:
+      branch: ${{ steps.build.outputs.branch }}
+
+  create-pr:
+    needs: build
+    if: needs.build.outputs.branch
+    environment:
+      name: pr-approval
+      deployment: false
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: ${{ needs.build.outputs.branch }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        token: ${{ secrets.DASH_USER_CONTRIBUTIONS_PAT }}
+        repository: ${{ env.BASE_REPO }}
+        persist-credentials: true
+    - name: create PR
+      env:
+        GH_TOKEN: ${{ secrets.DASH_USER_CONTRIBUTIONS_PAT }}
+      run: |
+        set -euxo pipefail
+
+        git fetch --depth=1 origin "+refs/heads/$THIS_REPO_NAME/*:refs/remotes/origin/$THIS_REPO_NAME/*"
+        git branch "$BRANCH" "origin/$BRANCH"
+
+        gh pr create --repo "$BASE_REPO" --head "$BRANCH" --fill >> "$GITHUB_STEP_SUMMARY"
+    - name: delete previous branches (close PRs)
+      run: |
+        set -euxo pipefail
+
+        for ref in $(git for-each-ref --sort=v:refname --format='%(refname:strip=3)' "refs/remotes/origin/$THIS_REPO_NAME/*"); do
+          if [ "$ref" != "$BRANCH" ]; then
+            git push origin --delete "$ref"
+          fi
+        done
