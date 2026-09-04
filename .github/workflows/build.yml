@@ -129,7 +129,7 @@ jobs:
           git reset
         else
           git checkout --orphan "$branch"
-          git rm -rf .
+          git reset
         fi
 
         touch .nojekyll
