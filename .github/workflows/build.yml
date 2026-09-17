@@ -167,8 +167,11 @@ jobs:
         git fetch --depth=1 origin "+refs/heads/$CALLER_REPO_NAME/*:refs/remotes/origin/$CALLER_REPO_NAME/*"
         git branch "$BRANCH" "origin/$BRANCH"
 
-        gh pr create --repo "$BASE_REPO" --head "$CALLER_REPO_OWNER:$BRANCH" --fill >> "$GITHUB_STEP_SUMMARY"
+        pr_url=$(gh pr create --repo "$BASE_REPO" --head "$CALLER_REPO_OWNER:$BRANCH" --fill)
+        echo "* $pr_url" >> "$GITHUB_STEP_SUMMARY"
     - name: delete previous branches (close PRs)
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
         set -euxo pipefail
 
@@ -177,5 +180,7 @@ jobs:
         ); do
           if [ "$ref" != "$BRANCH" ]; then
             git push origin --delete "$ref"
+            gh pr list --repo "$BASE_REPO" --state all --head "$ref" --json url \
+              --jq '.[] | "* \(.url)"' >> "$GITHUB_STEP_SUMMARY"
           fi
         done
