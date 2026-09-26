@@ -168,7 +168,7 @@ jobs:
         git branch "$BRANCH" "origin/$BRANCH"
 
         pr_url=$(gh pr create --repo "$BASE_REPO" --head "$CALLER_REPO_OWNER:$BRANCH" --fill)
-        printf '%s\n' "| ❇️ | $pr_url |" "| --- | --- |" >> "$GITHUB_STEP_SUMMARY"
+        printf '%s\n' "| | |" "| --- | --- |" "| ❇️ | $pr_url |" >> "$GITHUB_STEP_SUMMARY"
 
         for ref in $(
           git for-each-ref --sort=v:refname --format='%(refname:strip=3)' "refs/remotes/origin/$CALLER_REPO_NAME/*"
