@@ -174,8 +174,13 @@ jobs:
           git for-each-ref --sort=v:refname --format='%(refname:strip=3)' "refs/remotes/origin/$CALLER_REPO_NAME/*"
         ); do
           if [ "$ref" != "$BRANCH" ]; then
-            gh pr list --repo "$BASE_REPO" --state open --head "$ref" --json url \
-              --jq '.[] | "| ❌ | \(.url) |"' >> "$GITHUB_STEP_SUMMARY"
+            for number in $(
+              gh pr list --repo "$BASE_REPO" --state open --head "$ref" --json number --jq '.[].number'
+            ); do
+              gh pr comment "$number" --repo "$BASE_REPO" --body "* replaced by $pr_url"
+              printf '%s\n' "| ❌ | $BASE_REPO#$number |" >> "$GITHUB_STEP_SUMMARY"
+            done
+
             git push origin --delete "$ref"
           fi
         done
