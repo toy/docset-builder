@@ -27,7 +27,7 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         persist-credentials: true
-    - uses: ruby/setup-ruby@14594264cd68ce8a2345dd349bc3d138a4ef85c8 # v1.327.0
+    - uses: ruby/setup-ruby@e81a8fa391b11a595c1b7ed84177cc0fe02faf83 # v1.328.0
       with:
         ruby-version: ruby
         bundler-cache: true
@@ -39,7 +39,7 @@ jobs:
         go install github.com/technosophos/dashing@172c69f1c58cf6efe5b1813fa06ce29a684b00e4
         echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
     - run: bundle exec rake
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
       with:
         name: results
         path: 'results/*'
